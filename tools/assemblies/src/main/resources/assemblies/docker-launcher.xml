@@ -1,0 +1,22 @@
+<assembly>
+  <id>docker-launcher</id>
+  <includeBaseDirectory>false</includeBaseDirectory>
+
+  <dependencySets>
+    <dependencySet>
+      <scope>provided</scope>
+      <includes>
+        <include>org.commonjava.indy.launch:*</include>
+      </includes>
+      <outputDirectory>/</outputDirectory>
+      <outputFileNameMapping>indy.tar.gz</outputFileNameMapping>
+    </dependencySet>
+  </dependencySets>
+  
+  <fileSets>
+    <fileSet>
+      <directory>${project.build.directory}/dependency/image-base</directory>
+      <outputDirectory>/</outputDirectory>
+    </fileSet>
+  </fileSets>
+</assembly>

@@ -1,0 +1,250 @@
+/**
+ * Copyright (C) 2011-2018 Red Hat, Inc. (https://github.com/Commonjava/indy)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *         http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package org.commonjava.indy.bind.jaxrs;
+
+import org.commonjava.cdi.util.weft.ThreadContext;
+import org.commonjava.indy.measure.annotation.Measure;
+import org.commonjava.indy.measure.annotation.MetricNamed;
+import org.commonjava.indy.metrics.IndyMetricsConstants;
+import org.commonjava.indy.metrics.IndyMetricsManager;
+import org.commonjava.maven.galley.model.SpecialPathInfo;
+import org.commonjava.maven.galley.spi.cache.CacheProvider;
+import org.commonjava.maven.galley.spi.io.SpecialPathManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.enterprise.context.ApplicationScoped;
+import javax.inject.Inject;
+import javax.servlet.Filter;
+import javax.servlet.FilterChain;
+import javax.servlet.FilterConfig;
+import javax.servlet.ServletException;
+import javax.servlet.ServletRequest;
+import javax.servlet.ServletResponse;
+import javax.servlet.http.HttpServletRequest;
+import java.io.IOException;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Supplier;
+
+import static org.commonjava.indy.bind.jaxrs.RequestContextConstants.CLIENT_ADDR;
+import static org.commonjava.indy.bind.jaxrs.RequestContextConstants.EXTERNAL_ID;
+import static org.commonjava.indy.bind.jaxrs.RequestContextConstants.INTERNAL_ID;
+import static org.commonjava.indy.bind.jaxrs.RequestContextConstants.PREFERRED_ID;
+import static org.commonjava.indy.bind.jaxrs.RequestContextConstants.X_FORWARDED_FOR;
+import static org.commonjava.indy.measure.annotation.MetricNamed.DEFAULT;
+import static org.commonjava.indy.metrics.IndyMetricsConstants.getDefaultName;
+
+@ApplicationScoped
+public class ResourceManagementFilter
+        implements Filter
+{
+
+    public static final String HTTP_REQUEST = "http-request";
+
+    public static final String ORIGINAL_THREAD_NAME = "original-thread-name";
+
+    public static final String METHOD_PATH_TIME = "method-path-time";
+
+    private static final String BASE_CONTENT_METRIC = "indy.content.";
+
+    private static final String POM_CONTENT_METRIC = BASE_CONTENT_METRIC + "pom";
+
+    private static final String NORMAL_CONTENT_METRIC = BASE_CONTENT_METRIC + "other";
+
+    private static final String METADATA_CONTENT_METRIC = BASE_CONTENT_METRIC + "metadata";
+
+    private static final String SPECIAL_CONTENT_METRIC = BASE_CONTENT_METRIC + "special";
+
+    @Inject
+    private CacheProvider cacheProvider;
+
+    @Inject
+    private MDCManager mdcManager;
+
+    @Inject
+    private SpecialPathManager specialPathManager;
+
+    @Inject
+    private IndyMetricsManager metricsManager;
+
+    private final Logger logger = LoggerFactory.getLogger( getClass() );
+
+    private final Logger restLogger = LoggerFactory.getLogger( "org.commonjava.topic.rest.inbound" );
+
+    @Override
+    public void init( final FilterConfig filterConfig )
+            throws ServletException
+    {
+        if ( logger.isTraceEnabled() )
+        {
+            cacheProvider.startReporting();
+        }
+    }
+
+    @Override
+    @Measure
+    public void doFilter( final ServletRequest request, final ServletResponse response, final FilterChain chain )
+            throws IOException, ServletException
+    {
+        String name = Thread.currentThread().getName();
+        String clientAddr = request.getRemoteAddr();
+
+        final HttpServletRequest hsr = (HttpServletRequest) request;
+        final String xForwardFor = hsr.getHeader( X_FORWARDED_FOR );
+        if ( xForwardFor != null )
+        {
+            clientAddr = xForwardFor; // OSE proxy use HTTP header 'x-forwarded-for' to represent user IP
+        }
+
+        String tn = hsr.getMethod() + " " + hsr.getPathInfo() + " (" + System.currentTimeMillis() + "." + System.nanoTime() + ")";
+        String qs = hsr.getQueryString();
+
+        try
+        {
+            ThreadContext.clearContext();
+            ThreadContext threadContext = ThreadContext.getContext( true );
+
+            threadContext.put( ORIGINAL_THREAD_NAME, name );
+
+            threadContext.put( HTTP_REQUEST, hsr );
+
+            threadContext.put( METHOD_PATH_TIME, tn );
+
+            threadContext.put( CLIENT_ADDR, clientAddr );
+
+            putRequestIDs( hsr, threadContext, mdcManager );
+
+            mdcManager.putUserIP( clientAddr );
+
+            mdcManager.putExtraHeaders( hsr );
+
+            logger.debug( "START request: {} (from: {})", tn, clientAddr );
+
+            Thread.currentThread().setName( tn );
+
+            restLogger.info( "START {}{} (from: {})", hsr.getRequestURL(), qs == null ? "" : "?" + qs, clientAddr );
+
+            AtomicReference<IOException> ioex = new AtomicReference<>();
+            AtomicReference<ServletException> seex = new AtomicReference<>();
+
+            metricsManager.wrapWithStandardMetrics( () -> {
+                try
+                {
+                    chain.doFilter( request, response );
+                }
+                catch ( IOException e )
+                {
+                    ioex.set( e );
+                }
+                catch ( ServletException e )
+                {
+                    seex.set( e );
+                }
+                return null;
+            }, pathClassifier( hsr.getPathInfo() ) );
+
+            if ( ioex.get() != null )
+            {
+                throw ioex.get();
+            }
+
+            if ( seex.get() != null )
+            {
+                throw seex.get();
+            }
+        }
+        finally
+        {
+            logger.debug( "Cleaning up resources for thread: {}", Thread.currentThread().getName() );
+            try
+            {
+                cacheProvider.cleanupCurrentThread();
+            }
+            catch ( Exception e )
+            {
+                logger.error( "Failed to cleanup resources", e );
+            }
+
+            restLogger.info( "END {}{} (from: {})", hsr.getRequestURL(), qs == null ? "" : "?" + qs, clientAddr );
+
+            Thread.currentThread().setName( name );
+            ThreadContext.clearContext();
+
+            logger.debug( "END request: {} (from: {})", tn, clientAddr );
+
+            mdcManager.clear();
+        }
+    }
+
+    private Supplier<String> pathClassifier( final String pathInfo )
+    {
+        return ()->{
+            if ( !pathInfo.contains( "content" ))
+            {
+                return IndyMetricsConstants.SKIP_METRIC;
+            }
+            SpecialPathInfo spi = specialPathManager.getSpecialPathInfo( pathInfo );
+            if ( spi == null )
+            {
+                return pathInfo.endsWith( ".pom" ) ? POM_CONTENT_METRIC : NORMAL_CONTENT_METRIC;
+            }
+            else if ( spi.isMetadata() )
+            {
+                return METADATA_CONTENT_METRIC;
+            }
+            else
+            {
+                return SPECIAL_CONTENT_METRIC;
+            }
+        };
+    }
+
+    /**
+     * Put to MDC / threadContext request IDs.
+    */
+    private void putRequestIDs( HttpServletRequest hsr, ThreadContext threadContext, MDCManager mdcManager )
+    {
+        /* We would always generate internalID and provide that in the MDC.
+         * If the calling service supplies an externalID, we'd map that under its own key.
+         * PreferredID should try to use externalID if it's available, and default over to using internalID if it's not.
+         * What this gives us is a single key we can use to reference an ID for the request,
+         * and whenever possible it'll reflect the externally supplied ID.
+         */
+        String internalID = UUID.randomUUID().toString();
+        String externalID = hsr.getHeader( EXTERNAL_ID );
+        String preferredID = externalID != null ? externalID : internalID;
+
+        mdcManager.putRequestIDs( internalID, externalID, preferredID );
+
+        /*
+         * We should also put the same values in the ThreadContext map, so we can reference them from code without
+         * having to go through the logging framework
+         */
+        threadContext.put( INTERNAL_ID, internalID );
+        if ( externalID != null )
+        {
+            threadContext.put( EXTERNAL_ID, externalID );
+        }
+        threadContext.put( PREFERRED_ID, preferredID );
+    }
+
+    @Override
+    public void destroy()
+    {
+    }
+
+}
