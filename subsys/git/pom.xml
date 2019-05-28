@@ -53,5 +53,11 @@
       <groupId>org.jboss.byteman</groupId>
       <artifactId>byteman-bmunit</artifactId>
     </dependency>
+    <dependency>
+      <groupId>org.commonjava.maven.atlas</groupId>
+      <artifactId>atlas-identities</artifactId>
+      <version>0.17.2</version>
+      <type>jar</type>
+    </dependency>
   </dependencies>
 </project>
