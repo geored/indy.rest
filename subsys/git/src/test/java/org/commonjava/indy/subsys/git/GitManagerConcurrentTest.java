@@ -89,7 +89,7 @@ public class GitManagerConcurrentTest
 
         final String user = "testAddAndCommit";
         git.addFiles( new ChangeSummary( user, "first commit"), f );
-        git.commit();
+//        git.commit();
 
         pool.execute( () -> {
             try
@@ -112,7 +112,7 @@ public class GitManagerConcurrentTest
             {
                 FileUtils.write( f, "This is another test" );
                 git.addFiles( new ChangeSummary( user, "second commit"), f );
-                git.commit();
+//                git.commit();
             }
             catch ( Exception e )
             {
@@ -162,7 +162,7 @@ public class GitManagerConcurrentTest
                     final String user = "test" + j;
                     final String log = "test commit " + j;
                     git.addFiles( new ChangeSummary( user, log ), f );
-                    git.commit();
+//                    git.commit();
                 }
                 catch ( Exception e )
                 {
@@ -207,7 +207,7 @@ public class GitManagerConcurrentTest
                 final String user = "test" + i;
                 final String log = "test commit " + i;
                 git.addFiles( new ChangeSummary( user, log ), f );
-                git.commit();
+//                git.commit();
             }
             catch ( Exception e )
             {
@@ -230,7 +230,7 @@ public class GitManagerConcurrentTest
                     final String user = "test" + j;
                     final String log = "delete test" + j + ".txt";
                     git.delete( new ChangeSummary( user, log ), f );
-                    git.commit();
+//                    git.commit();
                 }
                 catch ( Exception e )
                 {
