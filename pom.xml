@@ -131,13 +131,11 @@
     <module>embedder</module>
     <module>ftests</module>
     <module>rest</module>
-    <module>clients</module>
-    
+    <module>clients</module>  
     <!-- TODO: put in profile, figure out why release version-adjustment isn't working in profile -->
     <!-- <module>embedder-tests</module> -->
     <module>deployments</module>
   </modules>
-  
   <dependencyManagement>
     <dependencies>
       <dependency>
@@ -147,7 +145,6 @@
         <type>pom</type>
         <scope>import</scope>
       </dependency>
-      
       <!--<dependency>-->
         <!--<groupId>org.commonjava.indy.ui</groupId>-->
         <!--<artifactId>indy-ui-layover</artifactId>-->
@@ -155,7 +152,6 @@
         <!--&lt;!&ndash; <type>war</type> &ndash;&gt;-->
         <!--<scope>runtime</scope>-->
       <!--</dependency>-->
-      
       <dependency>
         <groupId>org.commonjava.indy</groupId>
         <artifactId>indy-model-core-java</artifactId>
